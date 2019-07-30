@@ -1,4 +1,5 @@
 fire
 logzero
 numpy
-
+pathlib2
+enum34
