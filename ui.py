@@ -66,8 +66,6 @@ class ClientThread(QThread, Client):
         self.sig_video_feed.connect(ui.update_video_feed)
         self.sig_guidance_feed.connect(ui.set_guidance)
         ui.start_signal.connect(self.start)
-
-        self._stop = threading.Event()
         self.countdown_from = countdown_from
 
     def video_frame_callback(self, frame):
@@ -99,7 +97,7 @@ class ClientThread(QThread, Client):
         super(ClientThread, self).connect_and_run()
 
     def stop(self):
-        self._stop.set()
+        self.shutdown_event.set()
 
 
 def main(ip, *args, **kwargs):
@@ -107,10 +105,11 @@ def main(ip, *args, **kwargs):
     ui = UI()
     ui.show()
     clientThread = ClientThread(ip, ui)
-    clientThread.finished.connect(app.exit)
 
-    # clientThread.start()
-    sys.exit(app.exec_())  # and execute the app
+    app.exec_()
+
+    clientThread.stop()
+    clientThread.wait()
 
 
 if __name__ == '__main__':  # if we're running file directly and not

@@ -18,6 +18,7 @@ from logzero import logger
 
 import protocol
 from config import Config
+from performance import PerformanceLogger
 from socketLib import ClientCommand, ClientReply, SocketClientThread
 
 
@@ -220,6 +221,9 @@ class Client(object):
         self.result_port = result_port
         self.token_mgr = TokenManager(num_tokens)
 
+        self.shutdown_event = threading.Event()
+        self.shutdown_event.clear()
+
     def video_frame_callback(self, frame):
         # no-op by default
         logger.info('Superclass...')
@@ -283,23 +287,30 @@ class Client(object):
             with self.token_mgr.has_token_cv:
                 self.token_mgr.has_token_cv.notifyAll()
 
-        try:
-            while True:
-                resp = result_reply_q.get()
-                # connect and send also send reply to reply queue without any
-                # data attached
-                if resp.type == ClientReply.SUCCESS and resp.data is not None:
-                    (resp_header, resp_data) = resp.data
-                    resp_header = json.loads(resp_header)
-                    logger.debug('header: {}'.format(resp_header))
-                    self.response_callback(Client.parse(resp_data))
+        with PerformanceLogger('testing', file_dir='/opt/mnt/') as perf_log:
+            while not self.shutdown_event.is_set():
+                try:
+                    resp = result_reply_q.get(timeout=0.01)
 
-                elif resp.type == ClientReply.ERROR:
-                    logger.error("Error: {}".format(resp.data))
-                    join_threads()
+                    # connect and send also send reply to reply queue without
+                    # any data attached
+                    if resp.type == ClientReply.SUCCESS \
+                            and resp.data is not None:
+                        (resp_header, resp_data) = resp.data
+                        resp_header = json.loads(resp_header)
+                        logger.debug('header: {}'.format(resp_header))
+                        self.response_callback(Client.parse(resp_data))
+
+                    elif resp.type == ClientReply.ERROR:
+                        logger.error("Error: {}".format(resp.data))
+                        join_threads()
+                        break
+                except Queue.Empty:
+                    continue
+                except KeyboardInterrupt:
                     break
-        except KeyboardInterrupt:
-            join_threads()
+
+        join_threads()
 
 
 if __name__ == '__main__':
