@@ -224,6 +224,8 @@ class Client(object):
         self.shutdown_event = threading.Event()
         self.shutdown_event.clear()
 
+        self.current_step = -1
+
     def video_frame_callback(self, frame):
         # no-op by default
         logger.info('Superclass...')
@@ -287,6 +289,9 @@ class Client(object):
             with self.token_mgr.has_token_cv:
                 self.token_mgr.has_token_cv.notifyAll()
 
+        self.current_step = 0
+
+        # todo: parameterize location
         with PerformanceLogger('testing', file_dir='/opt/mnt/') as perf_log:
             while not self.shutdown_event.is_set():
                 try:
@@ -299,7 +304,18 @@ class Client(object):
                         (resp_header, resp_data) = resp.data
                         resp_header = json.loads(resp_header)
                         logger.debug('header: {}'.format(resp_header))
-                        self.response_callback(Client.parse(resp_data))
+
+                        parsed_data = Client.parse(resp_data)
+                        step = parsed_data.get('state_index', -1)
+                        if step < 0:
+                            perf_log.log(PerformanceLogger.LogType.error,
+                                         self.current_step)
+                        elif step != self.current_step:
+                            perf_log.log(PerformanceLogger.LogType.step_chg,
+                                         step)
+                            self.current_step = step
+
+                        self.response_callback(parsed_data)
 
                     elif resp.type == ClientReply.ERROR:
                         logger.error("Error: {}".format(resp.data))

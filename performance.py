@@ -26,9 +26,11 @@ class PerformanceLogger(object):
 
     @unique
     class LogType(StrEnum):
+        start = 'START'
         error = 'ERROR'
         step_chg = 'STEP_CHANGE'
         abort = 'ABORT'
+        end = 'END'
 
     Record = namedtuple('Record', CSV_COLUMNS)
 
@@ -42,7 +44,7 @@ class PerformanceLogger(object):
         # put start record in log
         self.queue.put(PerformanceLogger.Record(
             timestamp=0.0,
-            type='START',
+            type=PerformanceLogger.LogType.start.value(),
             extra_info=None
         ))
 
@@ -87,7 +89,7 @@ class PerformanceLogger(object):
         # put end record in log
         self.queue.put(PerformanceLogger.Record(
             timestamp=time.time() - self.start_time,
-            type='END',
+            type=PerformanceLogger.LogType.end.value(),
             extra_info=None
         ))
 

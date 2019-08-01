@@ -77,6 +77,7 @@ class ClientThread(QThread, Client):
 
         if len(instruction) > 0 and len(guidance) > 0:
             logger.info('instruction: {}'.format(instruction))
+            logger.info('step: {}'.format(resp_dict.get('state_index')))
 
             if len(guidance[-1]) > 0:
                 guidance = b64decode(guidance[-1][0])
