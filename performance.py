@@ -15,6 +15,26 @@ class StrEnum(str, Enum):
     pass
 
 
+FrameRecord = namedtuple('FrameRecord',
+                         [])
+
+
+class TaskMonitor(object):
+    def __init__(self):
+        super(TaskMonitor, self).__init__()
+        self.latest_frame = None
+
+    def register_sent_frame(self, frame_id):
+        self.latest_frame = (frame_id, time.time())
+
+    def register_reply_recv(self, frame_id, data):
+        recv_time = time.time()
+        sent_id, sent_time = self.latest_frame
+        assert frame_id == sent_id
+
+        # todo analyze reply data
+
+
 class PerformanceLogger(object):
     PATH_FMT = '{}.log.csv'
     QUEUE_TIMEOUT = 0.1
