@@ -1,3 +1,4 @@
+import json
 import time
 from collections import namedtuple
 from csv import DictWriter
@@ -17,6 +18,29 @@ class StrEnum(str, Enum):
 
 FrameRecord = namedtuple('FrameRecord',
                          [])
+
+
+class TaskStepRecord(object):
+    def __init__(self, step_index):
+        self.index = step_index
+        self.frames = []
+        self.start = -1
+        self.end = -1
+        self.duration = 0
+
+    def add_frame(self, frame):
+        self.frames.append(frame)
+        if self.start < 0:
+            self.start = frame.send
+
+        self.end = frame.recv
+        self.duration = self.end - self.start
+
+    def to_dict(self):
+        d = self.__dict__
+        frames = [f.__dict__ for f in d.get('frames', [])]
+        d['frames'] = frames
+        return d
 
 
 class TaskMonitor(object):
