@@ -18,7 +18,7 @@ from logzero import logger
 
 import protocol
 from config import Config
-from performance import PerformanceLogger
+from performance import TaskMonitor
 from socketLib import ClientCommand, ClientReply, SocketClientThread
 
 
@@ -89,12 +89,13 @@ class VideoCaptureThread(threading.Thread):
 
 
 class VideoStreamingThread(SocketClientThread):
-    def __init__(self, video_capture,
+    def __init__(self, video_capture, task_monitor,
                  cmd_q=None, reply_q=None):
         super(VideoStreamingThread, self).__init__(cmd_q, reply_q)
         self.handlers[GabrielSocketCommand.STREAM] = self._handle_STREAM
         self.is_streaming = False
         self.video_capture = video_capture
+        self.task_monitor = task_monitor
 
     def run(self):
         while self.alive.isSet():
@@ -118,6 +119,7 @@ class VideoStreamingThread(SocketClientThread):
             ret, jpeg_frame = cv2.imencode('.jpg', frame)
             header = {protocol.Protocol_client.JSON_KEY_FRAME_ID: str(id)}
             header_json = json.dumps(header)
+            self.task_monitor.register_sent_frame(id)
             self._handle_SEND(ClientCommand(ClientCommand.SEND, header_json))
             self._handle_SEND(ClientCommand(
                 ClientCommand.SEND, jpeg_frame.tostring()))
@@ -164,7 +166,8 @@ class ResultReceivingThread(SocketClientThread):
         else:
             data_size = header_json['data_size']
             data = self._recv_n_bytes(data_size)
-        return (header, data)
+
+        return header_json, data
 
 
 class TokenManager(object):
@@ -244,55 +247,56 @@ class Client(object):
             return data
 
     def connect_and_run(self):
-        logger.debug(
-            "Connecting to Server ({}) Port ({}, {})".format(self.ip,
-                                                             self.video_port,
-                                                             self.result_port))
-
-        # create the video threads
-        stream_cmd_q = Queue.Queue()
-        video_capture_thread = VideoCaptureThread(
-            self.video_input,
-            video_frame_callback=self.video_frame_callback
-        )
-        video_streaming_thread = VideoStreamingThread(video_capture_thread,
-                                                      cmd_q=stream_cmd_q)
-        video_streaming_thread.daemon = True
-
-        # connect and stream to server
-        stream_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
-                                       (self.ip, self.video_port)))
-        stream_cmd_q.put(ClientCommand(GabrielSocketCommand.STREAM,
-                                       self.token_mgr))
-
-        # create listening threads
-        result_cmd_q = Queue.Queue()
-        result_reply_q = Queue.Queue()
-        result_receiving_thread = ResultReceivingThread(
-            cmd_q=result_cmd_q, reply_q=result_reply_q, legacy=self.legacy)
-        result_receiving_thread.daemon = True
-
-        result_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
-                                       (self.ip, self.result_port)))
-        result_cmd_q.put(ClientCommand(GabrielSocketCommand.LISTEN,
-                                       self.token_mgr))
-
-        video_capture_thread.start()
-        result_receiving_thread.start()
-        sleep(0.1)
-        video_streaming_thread.start()
-
-        def join_threads():
-            video_streaming_thread.join()
-            result_receiving_thread.join()
-            video_capture_thread.join()
-            with self.token_mgr.has_token_cv:
-                self.token_mgr.has_token_cv.notifyAll()
-
-        self.current_step = 0
-
         # todo: parameterize location
-        with PerformanceLogger('testing', file_dir='/opt/mnt/') as perf_log:
+        with TaskMonitor('testing', working_dir='/opt/mnt/') as task_monitor:
+            logger.debug(
+                "Connecting to Server ({}) Port ({}, {})".format(self.ip,
+                                                                 self.video_port,
+                                                                 self.result_port))
+
+            # create the video threads
+            stream_cmd_q = Queue.Queue()
+            video_capture_thread = VideoCaptureThread(
+                self.video_input,
+                video_frame_callback=self.video_frame_callback
+            )
+            video_streaming_thread = VideoStreamingThread(video_capture_thread,
+                                                          task_monitor,
+                                                          cmd_q=stream_cmd_q)
+            video_streaming_thread.daemon = True
+
+            # connect and stream to server
+            stream_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
+                                           (self.ip, self.video_port)))
+            stream_cmd_q.put(ClientCommand(GabrielSocketCommand.STREAM,
+                                           self.token_mgr))
+
+            # create listening threads
+            result_cmd_q = Queue.Queue()
+            result_reply_q = Queue.Queue()
+            result_receiving_thread = ResultReceivingThread(
+                cmd_q=result_cmd_q, reply_q=result_reply_q, legacy=self.legacy)
+            result_receiving_thread.daemon = True
+
+            result_cmd_q.put(ClientCommand(ClientCommand.CONNECT,
+                                           (self.ip, self.result_port)))
+            result_cmd_q.put(ClientCommand(GabrielSocketCommand.LISTEN,
+                                           self.token_mgr))
+
+            video_capture_thread.start()
+            result_receiving_thread.start()
+            sleep(0.1)
+            video_streaming_thread.start()
+
+            def join_threads():
+                video_streaming_thread.join()
+                result_receiving_thread.join()
+                video_capture_thread.join()
+                with self.token_mgr.has_token_cv:
+                    self.token_mgr.has_token_cv.notifyAll()
+
+            self.current_step = 0
+
             while not self.shutdown_event.is_set():
                 try:
                     resp = result_reply_q.get(timeout=0.01)
@@ -302,18 +306,13 @@ class Client(object):
                     if resp.type == ClientReply.SUCCESS \
                             and resp.data is not None:
                         (resp_header, resp_data) = resp.data
-                        resp_header = json.loads(resp_header)
                         logger.debug('header: {}'.format(resp_header))
 
                         parsed_data = Client.parse(resp_data)
                         step = parsed_data.get('state_index', -1)
-                        if step < 0:
-                            perf_log.log(PerformanceLogger.LogType.error,
-                                         self.current_step)
-                        elif step != self.current_step:
-                            perf_log.log(PerformanceLogger.LogType.step_chg,
-                                         step)
-                            self.current_step = step
+                        task_monitor.register_reply_recv(
+                            resp_header['frame_id'], step
+                        )
 
                         self.response_callback(parsed_data)
 
