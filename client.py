@@ -309,9 +309,9 @@ class Client(object):
                         logger.debug('header: {}'.format(resp_header))
 
                         parsed_data = Client.parse(resp_data)
-                        step = parsed_data.get('state_index', -1)
+                        step = int(parsed_data.get('state_index', -1))
                         task_monitor.register_reply_recv(
-                            resp_header['frame_id'], step
+                            int(resp_header['frame_id']), step
                         )
 
                         self.response_callback(parsed_data)
