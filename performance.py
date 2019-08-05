@@ -16,12 +16,12 @@ class StrEnum(str, Enum):
     pass
 
 
-FrameRecord = namedtuple('FrameRecord',
-                         [])
+FrameRecord = namedtuple('FrameRecord', ['index', 'send', 'recv'])
 
 
 class TaskStepRecord(object):
     def __init__(self, step_index):
+        super(TaskStepRecord, self).__init__()
         self.index = step_index
         self.frames = []
         self.start = -1
@@ -46,17 +46,23 @@ class TaskStepRecord(object):
 class TaskMonitor(object):
     def __init__(self):
         super(TaskMonitor, self).__init__()
-        self.latest_frame = None
+        self.current_step = TaskStepRecord(step_index=0)
+        self.frame_in_flight = None
 
     def register_sent_frame(self, frame_id):
-        self.latest_frame = (frame_id, time.time())
+        self.frame_in_flight = (frame_id, time.time())
 
-    def register_reply_recv(self, frame_id, data):
+    def register_reply_recv(self, recv_id, step_index):
         recv_time = time.time()
-        sent_id, sent_time = self.latest_frame
-        assert frame_id == sent_id
+        sent_id, sent_time = self.frame_in_flight
 
-        # todo analyze reply data
+        assert sent_id == recv_id
+
+        self.current_step.add_frame(FrameRecord(recv_id, sent_time, recv_time))
+
+        if self.current_step.index != step_index:
+            # todo: log task step
+            self.current_step = TaskStepRecord(step_index=step_index)
 
 
 class PerformanceLogger(object):
