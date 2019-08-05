@@ -43,11 +43,22 @@ class TaskStepRecord(object):
         return d
 
 
+class ErrorRecord(TaskStepRecord):
+    def __init__(self, step_index):
+        super(ErrorRecord, self).__init__(step_index=-1)
+        self.previous_step_index = step_index
+
+
 class TaskMonitor(object):
-    def __init__(self):
+    def __init__(self, run_id, working_dir=Path.cwd()):
         super(TaskMonitor, self).__init__()
         self.current_step = TaskStepRecord(step_index=0)
+        self.previous_steps = []
+        self.run_id = run_id
+        self.working_dir = working_dir
         self.frame_in_flight = None
+
+        self.init = -1
 
     def register_sent_frame(self, frame_id):
         self.frame_in_flight = (frame_id, time.time())
@@ -57,12 +68,33 @@ class TaskMonitor(object):
         sent_id, sent_time = self.frame_in_flight
 
         assert sent_id == recv_id
+        self.frame_in_flight = None
 
         self.current_step.add_frame(FrameRecord(recv_id, sent_time, recv_time))
 
         if self.current_step.index != step_index:
-            # todo: log task step
-            self.current_step = TaskStepRecord(step_index=step_index)
+            self.previous_steps.append(self.current_step)
+            self.current_step = TaskStepRecord(step_index) \
+                if step_index != -1 else ErrorRecord(step_index)
+
+    def __enter__(self):
+        self.init = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.previous_steps.append(self.current_step)
+        self.current_step = None
+
+        file_path = str(Path(self.working_dir, '{}.json'.format(self.run_id)))
+        with open(file_path, 'w') as f:
+            json.dump(
+                obj={
+                    'name'  : self.run_id,
+                    'init'  : self.init,
+                    'finish': time.time(),
+                    'steps' : [step.to_dict() for step in self.previous_steps]
+                },
+                fp=f)
 
 
 class PerformanceLogger(object):
